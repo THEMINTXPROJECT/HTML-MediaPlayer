@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+(C) 2026 MINTX SOFTWARE 
+LICENSE: MIT License
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>HTML Audio/Video Player</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      margin: 0; padding: 24px; background: #111; color: #eee;
+    }
+    .player {
+      max-width: 900px; margin: 0 auto; display: grid; gap: 16px;
+    }
+    .av-wrapper {
+      position: relative; background: #000; border-radius: 12px; overflow: hidden;
+    }
+    video, audio {
+      width: 100%; height: auto; display: block; background: #000;
+    }
+    .controls {
+      display: grid; grid-template-columns: 1fr auto auto auto auto; gap: 8px;
+      align-items: center; padding: 10px; background: #1b1b1b; border-radius: 12px;
+    }
+    .controls button, .controls input[type="range"], .controls select, .controls label {
+      appearance: none; border: none; border-radius: 8px; background: #2a2a2a; color: #eee;
+      padding: 8px 12px; font-size: 14px;
+    }
+    .controls button { cursor: pointer; }
+    .controls button:hover { background: #353535; }
+    .time, .speed, .volume { display: inline-flex; align-items: center; gap: 8px; }
+    .progress {
+      width: 100%; grid-column: 1 / -1; display: grid; align-items: center; gap: 8px;
+      grid-template-columns: auto 1fr auto;
+    }
+    .progress input[type="range"] { width: 100%; }
+    .row {
+      display: grid; gap: 12px; grid-template-columns: 1fr 1fr;
+    }
+    .panel {
+      background: #1b1b1b; padding: 12px; border-radius: 12px;
+    }
+    .panel h3 { margin: 0 0 8px; font-size: 16px; }
+    .playlist { display: grid; gap: 6px; }
+    .playlist button {
+      text-align: left; padding: 8px 10px; border-radius: 8px; background: #222;
+    }
+    .playlist button.active { background: #334155; }
+    .file-inputs { display: grid; gap: 8px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  </style>
+</head>
+<body>
+  <div class="player" id="player">
+    <div class="av-wrapper">
+      <video id="video" preload="metadata" playsinline></video>
+      <audio id="audio" preload="metadata" class="sr-only"></audio>
+    </div>
+
+    <div class="controls" aria-label="Media controls">
+      <div class="progress">
+        <span id="currentTime">0:00</span>
+        <input id="seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek" />
+        <span id="duration">0:00</span>
+      </div>
+
+      <button id="playPause" aria-label="Play">▶️ Play</button>
+
+      <div class="volume">
+        <label for="volume" class="sr-only">Volume</label>
+        <input id="volume" type="range" min="0" max="1" step="0.01" value="1" />
+      </div>
+
+      <div class="speed">
+        <label for="playbackRate">Speed</label>
+        <select id="playbackRate">
+          <option value="0.5">0.5×</option>
+          <option value="0.75">0.75×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option>
+          <option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+      </div>
+
+      <button id="mute" aria-label="Mute">🔇 Mute</button>
+      <button id="pip" aria-label="Picture in Picture">📺 PiP</button>
+      <button id="fullscreen" aria-label="Fullscreen">⛶ Full</button>
+    </div>
+
+    <div class="row">
+      <div class="panel">
+        <h3>Playlist</h3>
+        <div class="playlist" id="playlist"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Load files</h3>
+        <div class="file-inputs">
+          <label>
+            <span>Video file (mp4/webm/ogg)</span>
+            <input id="videoFile" type="file" accept="video/mp4,video/webm,video/ogg" />
+          </label>
+          <label>
+            <span>Audio file (mp3/wav/ogg)</span>
+            <input id="audioFile" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg" />
+          </label>
+          <label>
+            <span>Subtitles (VTT)</span>
+            <input id="subtitleFile" type="file" accept=".vtt,text/vtt" />
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const video = document.getElementById('video');
+      const audio = document.getElementById('audio');
+      const seek = document.getElementById('seek');
+      const currentTimeEl = document.getElementById('currentTime');
+      const durationEl = document.getElementById('duration');
+      const playPause = document.getElementById('playPause');
+      const volume = document.getElementById('volume');
+      const playbackRate = document.getElementById('playbackRate');
+      const muteBtn = document.getElementById('mute');
+      const pipBtn = document.getElementById('pip');
+      const fullscreenBtn = document.getElementById('fullscreen');
+      const playlistEl = document.getElementById('playlist');
+      const videoFile = document.getElementById('videoFile');
+      const audioFile = document.getElementById('audioFile');
+      const subtitleFile = document.getElementById('subtitleFile');
+
+      // Simple starter playlist (uses public sample URLs)
+      const playlist = [
+        {
+          type: 'video',
+          title: 'Sample Video (Big Buck Bunny, MP4)',
+          src: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
+          subtitles: null
+        },
+        {
+          type: 'audio',
+          title: 'Sample Audio (MP3)',
+          src: 'https://interactive-examples.mdn.mozilla.net/media/cc0-audio/t-rex-roar.mp3'
+        }
+      ];
+
+      let useVideo = true; // toggle between video element and audio element based on item type
+      let isSeeking = false;
+      let lastVolume = 1;
+
+      function formatTime(s) {
+        if (!isFinite(s)) return '0:00';
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = Math.floor(s % 60).toString().padStart(2, '0');
+        return h ? `${h}:${m.toString().padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+      }
+
+      function getMedia() { return useVideo ? video : audio; }
+
+      function setSource(item) {
+        const media = getMedia();
+        // Reset tracks
+        if (useVideo) {
+          while (video.firstChild) video.removeChild(video.firstChild);
+        }
+        media.src = item.src;
+        media.load();
+        media.play().catch(() => {});
+      }
+
+      function buildPlaylist() {
+        playlistEl.innerHTML = '';
+        playlist.forEach((item, idx) => {
+          const b = document.createElement('button');
+          b.textContent = `${item.type.toUpperCase()} • ${item.title}`;
+          b.onclick = () => {
+            useVideo = item.type === 'video';
+            video.style.display = useVideo ? 'block' : 'none';
+            audio.classList.toggle('sr-only', useVideo);
+            audio.pause(); video.pause();
+            setSource(item);
+            // Add subtitles if provided
+            if (useVideo && item.subtitles) {
+              const track = document.createElement('track');
+              track.kind = 'subtitles';
+              track.label = 'Subtitles';
+              track.srclang = 'en';
+              track.src = item.subtitles;
+              track.default = true;
+              video.appendChild(track);
+            }
+            highlightActive(idx);
+          };
+          playlistEl.appendChild(b);
+        });
+        highlightActive(0);
+      }
+
+      function highlightActive(index) {
+        [...playlistEl.children].forEach((el, i) => el.classList.toggle('active', i === index));
+      }
+
+      function updateTimeUI() {
+        const media = getMedia();
+        const dur = media.duration || 0;
+        const cur = media.currentTime || 0;
+        if (!isSeeking) {
+          seek.max = dur ? dur : 100;
+          seek.value = dur ? cur : 0;
+        }
+        currentTimeEl.textContent = formatTime(cur);
+        durationEl.textContent = formatTime(dur);
+      }
+
+      function syncPlayButton() {
+        const media = getMedia();
+        playPause.textContent = media.paused ? '▶️ Play' : '⏸ Pause';
+        playPause.setAttribute('aria-label', media.paused ? 'Play' : 'Pause');
+      }
+
+      // Event wiring
+      ['loadedmetadata', 'timeupdate', 'durationchange'].forEach(ev => {
+        video.addEventListener(ev, updateTimeUI);
+        audio.addEventListener(ev, updateTimeUI);
+      });
+
+      ['play', 'pause'].forEach(ev => {
+        video.addEventListener(ev, syncPlayButton);
+        audio.addEventListener(ev, syncPlayButton);
+      });
+
+      seek.addEventListener('input', () => {
+        isSeeking = true;
+        currentTimeEl.textContent = formatTime(parseFloat(seek.value));
+      });
+      seek.addEventListener('change', () => {
+        const media = getMedia();
+        const target = parseFloat(seek.value);
+        media.currentTime = target;
+        isSeeking = false;
+      });
+
+      playPause.addEventListener('click', () => {
+        const media = getMedia();
+        if (media.paused) media.play().catch(() => {}); else media.pause();
+      });
+
+      volume.addEventListener('input', () => {
+        const media = getMedia();
+        media.volume = parseFloat(volume.value);
+        if (media.volume > 0) lastVolume = media.volume;
+      });
+
+      playbackRate.addEventListener('change', () => {
+        const media = getMedia();
+        media.playbackRate = parseFloat(playbackRate.value);
+      });
+
+      muteBtn.addEventListener('click', () => {
+        const media = getMedia();
+        if (media.muted || media.volume === 0) {
+          media.muted = false;
+          media.volume = lastVolume || 1;
+          muteBtn.textContent = '🔇 Mute';
+        } else {
+          media.muted = true;
+          media.volume = 0;
+          muteBtn.textContent = '🔈 Unmute';
+        }
+        volume.value = media.volume;
+      });
+
+      fullscreenBtn.addEventListener('click', async () => {
+        const wrapper = document.querySelector('.av-wrapper');
+        try {
+          if (!document.fullscreenElement) {
+            await wrapper.requestFullscreen();
+          } else {
+            await document.exitFullscreen();
+          }
+        } catch {}
+      });
+
+      pipBtn.addEventListener('click', async () => {
+        try {
+          if (useVideo && 'requestPictureInPicture' in HTMLVideoElement.prototype) {
+            if (document.pictureInPictureElement) {
+              await document.exitPictureInPicture();
+            } else {
+              await video.requestPictureInPicture();
+            }
+          }
+        } catch {}
+      });
+
+      // File loaders
+      videoFile.addEventListener('change', () => {
+        const file = videoFile.files[0];
+        if (!file) return;
+        const url = URL.createObjectURL(file);
+        playlist.unshift({
+          type: 'video',
+          title: file.name,
+          src: url
+        });
+        buildPlaylist();
+        playlistEl.firstChild.click();
+      });
+
+      audioFile.addEventListener('change', () => {
+        const file = audioFile.files[0];
+        if (!file) return;
+        const url = URL.createObjectURL(file);
+        playlist.unshift({
+          type: 'audio',
+          title: file.name,
+          src: url
+        });
+        buildPlaylist();
+        playlistEl.firstChild.click();
+      });
+
+      subtitleFile.addEventListener('change', () => {
+        const file = subtitleFile.files[0];
+        if (!file || !useVideo) return;
+        const url = URL.createObjectURL(file);
+        const track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.label = 'Subtitles';
+        track.srclang = 'en';
+        track.src = url;
+        track.default = true;
+        video.appendChild(track);
+      });
+
+      // Keyboard shortcuts
+      document.addEventListener('keydown', (e) => {
+        const media = getMedia();
+        switch (e.key.toLowerCase()) {
+          case ' ':
+          case 'k':
+            e.preventDefault();
+            if (media.paused) media.play().catch(() => {}); else media.pause();
+            break;
+          case 'arrowright':
+            media.currentTime = Math.min((media.currentTime || 0) + 5, media.duration || media.currentTime + 5);
+            break;
+          case 'arrowleft':
+            media.currentTime = Math.max((media.currentTime || 0) - 5, 0);
+            break;
+          case 'm':
+            muteBtn.click();
+            break;
+          case 'f':
+            fullscreenBtn.click();
+            break;
+          case 'p':
+            pipBtn.click();
+            break;
+          case '>':
+            media.playbackRate = Math.min((media.playbackRate || 1) + 0.25, 4);
+            playbackRate.value = media.playbackRate.toString();
+            break;
+          case '<':
+            media.playbackRate = Math.max((media.playbackRate || 1) - 0.25, 0.25);
+            playbackRate.value = media.playbackRate.toString();
+            break;
+        }
+      });
+
+      // Initialize
+      buildPlaylist();
+      playlistEl.firstChild && playlistEl.firstChild.click();
+      video.playbackRate = 1;
+      audio.playbackRate = 1;
+      video.volume = 1; audio.volume = 1;
+    })();
+  </script>
+</body>
+</html>
+
